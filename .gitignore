@@ -18,3 +18,8 @@ go.work
 # Dependency directories (remove the comment below if you do not records
 # dependencies in go.mod)
 # vendor/
+
+# .env
+.env
+
+tmp

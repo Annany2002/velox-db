@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -13,76 +12,81 @@ func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	log.Printf("Client connected: %s", conn.RemoteAddr())
 
-	reader := bufio.NewReader(conn)
+	// Create a new RESPReader for this connection
+	respReader := NewRESPReader(conn)
 
 	for {
-		// Read a line of input from the client.
-		rawCommand, err := reader.ReadString('\n')
+		// Use the new parser to read a complete command object
+		obj, err := respReader.ReadObject()
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Error reading from client: %s", err.Error())
+				log.Printf("Error reading command: %s", err.Error())
 			}
 			return
 		}
 
-		// NOTE: This is a temporary, non-compliant parser.
-		// It splits by spaces and doesn't handle RESP arrays or bulk strings correctly.
-		// It will be replaced by a real RESP parser in a future step.
-		parts := strings.Fields(strings.TrimSpace(rawCommand))
-		if len(parts) == 0 {
+		// Commands are sent as an Array of Bulk Strings
+		if obj.Type != ArrayPrefix || len(obj.Array) == 0 {
+			conn.Write([]byte("-ERR invalid command format\r\n"))
 			continue
 		}
 
-		command := strings.ToUpper(parts[0])
-		args := parts[1:]
+		// Extract command and arguments
+		commandObj := obj.Array[0]
+		if commandObj.Type != BulkStringPrefix {
+			conn.Write([]byte("-ERR command must be a bulk string\r\n"))
+			continue
+		}
+		command := strings.ToUpper(string(commandObj.Bulk))
+		args := obj.Array[1:]
 
 		// Command router
 		switch command {
 		case "PING":
 			conn.Write([]byte("+PONG\r\n"))
 		case "SET":
-			if len(args) != 2 {
-				conn.Write([]byte("-ERR wrong number of arguments for 'set' command\r\n"))
+			if len(args) != 2 || args[0].Type != BulkStringPrefix || args[1].Type != BulkStringPrefix {
+				conn.Write([]byte("-ERR wrong number or type of arguments for 'set' command\r\n"))
 				continue
 			}
-			key, value := args[0], args[1]
-			mu.Lock() // Acquire an exclusive lock for writing
-			data[key] = []byte(value)
-			mu.Unlock() // Release the lock
+			key, value := string(args[0].Bulk), args[1].Bulk
+			mu.Lock()
+			data[key] = value
+			mu.Unlock()
 			conn.Write([]byte("+OK\r\n"))
 		case "GET":
-			if len(args) != 1 {
-				conn.Write([]byte("-ERR wrong number of arguments for 'get' command\r\n"))
+			if len(args) != 1 || args[0].Type != BulkStringPrefix {
+				conn.Write([]byte("-ERR wrong number or type of arguments for 'get' command\r\n"))
 				continue
 			}
-			key := args[0]
-			mu.RLock() // Acquire a shared lock for reading
+			key := string(args[0].Bulk)
+			mu.RLock()
 			value, ok := data[key]
-			mu.RUnlock() // Release the lock
+			mu.RUnlock()
 
 			if !ok {
-				conn.Write([]byte("$-1\r\n")) // RESP Null Bulk String
+				conn.Write([]byte("$-1\r\n"))
 			} else {
-				// RESP Bulk String format: $<length>\r\n<data>\r\n
 				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)
 				conn.Write([]byte(resp))
 			}
 		case "DEL":
-			if len(args) != 1 {
+			if len(args) < 1 {
 				conn.Write([]byte("-ERR wrong number of arguments for 'del' command\r\n"))
 				continue
 			}
-			key := args[0]
+			var deletedCount int
 			mu.Lock()
-			_, ok := data[key]
-			delete(data, key)
-			mu.Unlock()
-
-			if ok {
-				conn.Write([]byte(":1\r\n")) // RESP Integer: 1 for success
-			} else {
-				conn.Write([]byte(":0\r\n")) // RESP Integer: 0 if key didn't exist
+			for _, arg := range args {
+				if arg.Type != BulkStringPrefix { continue }
+				key := string(arg.Bulk)
+				if _, ok := data[key]; ok {
+					delete(data, key)
+					deletedCount++
+				}
 			}
+			mu.Unlock()
+			conn.Write([]byte(fmt.Sprintf(":%d\r\n", deletedCount)))
 		default:
 			conn.Write([]byte(fmt.Sprintf("-ERR unknown command '%s'\r\n", command)))
 		}
