@@ -22,4 +22,8 @@ go.work
 # .env
 .env
 
+# Temp files
 tmp
+
+# AOF files
+*.aof

@@ -8,15 +8,13 @@ import (
 	"strings"
 )
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, aof *Aof) { // Aof passed as an argument
 	defer conn.Close()
 	log.Printf("Client connected: %s", conn.RemoteAddr())
 
-	// Create a new RESPReader for this connection
 	respReader := NewRESPReader(conn)
 
 	for {
-		// Use the new parser to read a complete command object
 		obj, err := respReader.ReadObject()
 		if err != nil {
 			if err != io.EOF {
@@ -25,13 +23,11 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		// Commands are sent as an Array of Bulk Strings
 		if obj.Type != ArrayPrefix || len(obj.Array) == 0 {
 			conn.Write([]byte("-ERR invalid command format\r\n"))
 			continue
 		}
 
-		// Extract command and arguments
 		commandObj := obj.Array[0]
 		if commandObj.Type != BulkStringPrefix {
 			conn.Write([]byte("-ERR command must be a bulk string\r\n"))
@@ -53,6 +49,10 @@ func handleConnection(conn net.Conn) {
 			mu.Lock()
 			data[key] = value
 			mu.Unlock()
+			// Write the original command to the AOF file
+			if err := aof.Write(obj); err != nil {
+				log.Printf("Failed to write to AOF: %s", err.Error())
+			}
 			conn.Write([]byte("+OK\r\n"))
 		case "GET":
 			if len(args) != 1 || args[0].Type != BulkStringPrefix {
@@ -78,7 +78,9 @@ func handleConnection(conn net.Conn) {
 			var deletedCount int
 			mu.Lock()
 			for _, arg := range args {
-				if arg.Type != BulkStringPrefix { continue }
+				if arg.Type != BulkStringPrefix {
+					continue
+				}
 				key := string(arg.Bulk)
 				if _, ok := data[key]; ok {
 					delete(data, key)
@@ -86,6 +88,12 @@ func handleConnection(conn net.Conn) {
 				}
 			}
 			mu.Unlock()
+			// Only write to AOF if something was actually deleted
+			if deletedCount > 0 {
+				if err := aof.Write(obj); err != nil {
+					log.Printf("Failed to write to AOF: %s", err.Error())
+				}
+			}
 			conn.Write([]byte(fmt.Sprintf(":%d\r\n", deletedCount)))
 		default:
 			conn.Write([]byte(fmt.Sprintf("-ERR unknown command '%s'\r\n", command)))
@@ -94,6 +102,13 @@ func handleConnection(conn net.Conn) {
 }
 
 func main() {
+	// Initialize the AOF manager
+	aof, err := NewAof("velox-db.aof")
+	if err != nil {
+		log.Fatalf("Failed to initialize AOF: %s", err.Error())
+	}
+	defer aof.Close()
+
 	addr := "localhost:6380"
 	log.Printf("VeloxDB server starting on %s", addr)
 
@@ -109,6 +124,6 @@ func main() {
 			log.Printf("Failed to accept connection: %s", err.Error())
 			continue
 		}
-		go handleConnection(conn)
+		go handleConnection(conn, aof) // Pass the AOF manager to the handler
 	}
 }
