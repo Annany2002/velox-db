@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./logo/velox.png" alt="VeloxDB Logo" width="200" height="200"/>
+</p>
+
 # VeloxDB
 
 VeloxDB is a high-performance, in-memory database built from scratch in Go, inspired by the architecture of Redis. This project implements core Redis functionalities, including full RESP protocol support and AOF data persistence, serving as a deep dive into database internals and concurrent programming in Go.
