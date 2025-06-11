@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -138,7 +139,122 @@ func applyCommand(obj RESPObject, aof *Aof) ([]byte, error) {
 		}
 
 		value := element.Value.([]byte)
-		return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)), nil
+		return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(value), value), nil
+	
+	// NEW READ-ONLY LIST COMMANDS
+	case "LLEN":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("ERR wrong number of arguments for 'llen' command")
+		}
+		key := string(args[0].Bulk)
+		mu.RLock()
+		defer mu.RUnlock()
+
+		rawValue, ok := data[key]
+		if !ok {
+			return []byte(":0\r\n"), nil // Key doesn't exist, length is 0
+		}
+		listValue, ok := rawValue.(*list.List)
+		if !ok {
+			return nil, fmt.Errorf(WRONGTYPE_ERROR)
+		}
+		return fmt.Appendf(nil, ":%d\r\n", listValue.Len()), nil
+
+	case "LINDEX":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("ERR wrong number of arguments for 'lindex' command")
+		}
+		key := string(args[0].Bulk)
+		index, err := strconv.Atoi(string(args[1].Bulk))
+		if err != nil {
+			return nil, fmt.Errorf("ERR value is not an integer or out of range")
+		}
+
+		mu.RLock()
+		defer mu.RUnlock()
+
+		rawValue, ok := data[key]
+		if !ok {
+			return []byte("$-1\r\n"), nil
+		}
+		listValue, ok := rawValue.(*list.List)
+		if !ok {
+			return nil, fmt.Errorf(WRONGTYPE_ERROR)
+		}
+
+		// Handle negative index
+		if index < 0 {
+			index = listValue.Len() + index
+		}
+
+		if index < 0 || index >= listValue.Len() {
+			return []byte("$-1\r\n"), nil // Index out of bounds
+		}
+
+		// Traverse the list to find the element
+		i := 0
+		for e := listValue.Front(); e != nil; e = e.Next() {
+			if i == index {
+				value := e.Value.([]byte)
+				return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(value), value), nil
+			}
+			i++
+		}
+		return []byte("$-1\r\n"), nil // Should be unreachable, but good practice
+
+	case "LRANGE":
+		if len(args) != 3 {
+			return nil, fmt.Errorf("ERR wrong number of arguments for 'lrange' command")
+		}
+		key := string(args[0].Bulk)
+		start, err1 := strconv.Atoi(string(args[1].Bulk))
+		stop, err2 := strconv.Atoi(string(args[2].Bulk))
+		if err1 != nil || err2 != nil {
+			return nil, fmt.Errorf("ERR value is not an integer or out of range")
+		}
+
+		mu.RLock()
+		defer mu.RUnlock()
+
+		rawValue, ok := data[key]
+		if !ok {
+			return []byte("*0\r\n"), nil // Return empty array if key doesn't exist
+		}
+		listValue, ok := rawValue.(*list.List)
+		if !ok {
+			return nil, fmt.Errorf(WRONGTYPE_ERROR)
+		}
+
+		// Normalize negative indices
+		listLen := listValue.Len()
+		if start < 0 {
+			start = listLen + start
+		}
+		if stop < 0 {
+			stop = listLen + stop
+		}
+		// Clamp indices to list bounds
+		if start < 0 {
+			start = 0
+		}
+		if stop >= listLen {
+			stop = listLen - 1
+		}
+
+		var results []RESPObject
+		if start > stop || start >= listLen {
+			return []byte("*0\r\n"), nil // Return empty array for invalid range
+		}
+		
+		i := 0
+		for e := listValue.Front(); e != nil && i <= stop; e = e.Next() {
+			if i >= start {
+				results = append(results, RESPObject{Type: BulkStringPrefix, Bulk: e.Value.([]byte)})
+			}
+			i++
+		}
+
+		return RESPObject{Type: ArrayPrefix, Array: results}.ToBytes(), nil
 
 	case "REWRITEAOF":
 		if err := aof.Rewrite(); err != nil {
