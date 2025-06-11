@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"container/list"
 	"fmt"
 	"io"
 	"log"
@@ -10,7 +11,10 @@ import (
 	"strings"
 )
 
-// applyCommand now takes an Aof instance to handle the REWRITEAOF command.
+// WRONGTYPE_ERROR is a standard Redis error message for operating on the wrong key type.
+const WRONGTYPE_ERROR = "WRONGTYPE Operation against a key holding the wrong kind of value"
+
+// applyCommand now handles type checking and list commands.
 func applyCommand(obj RESPObject, aof *Aof) ([]byte, error) {
 	if obj.Type != ArrayPrefix || len(obj.Array) == 0 {
 		return nil, fmt.Errorf("invalid command format: not an array")
@@ -32,7 +36,7 @@ func applyCommand(obj RESPObject, aof *Aof) ([]byte, error) {
 		}
 		key, value := string(args[0].Bulk), args[1].Bulk
 		mu.Lock()
-		data[key] = value
+		data[key] = []byte(value)
 		mu.Unlock()
 		return []byte("+OK\r\n"), nil
 	case "GET":
@@ -41,10 +45,15 @@ func applyCommand(obj RESPObject, aof *Aof) ([]byte, error) {
 		}
 		key := string(args[0].Bulk)
 		mu.RLock()
-		value, ok := data[key]
+		rawValue, ok := data[key]
 		mu.RUnlock()
 		if !ok {
 			return []byte("$-1\r\n"), nil
+		}
+		// Type assertion to check if the value is a string
+		value, ok := rawValue.([]byte)
+		if !ok {
+			return nil, fmt.Errorf(WRONGTYPE_ERROR)
 		}
 		return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)), nil
 	case "DEL":
@@ -62,8 +71,75 @@ func applyCommand(obj RESPObject, aof *Aof) ([]byte, error) {
 			}
 		}
 		mu.Unlock()
-		return fmt.Appendf(nil, ":%d\r\n", deletedCount), nil
-	// New command to trigger AOF rewrite
+		return []byte(fmt.Sprintf(":%d\r\n", deletedCount)), nil
+	
+	// NEW LIST COMMANDS
+	case "LPUSH", "RPUSH":
+		if len(args) < 2 {
+			return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(command))
+		}
+		key := string(args[0].Bulk)
+		values := args[1:]
+		mu.Lock()
+		defer mu.Unlock()
+
+		rawValue, ok := data[key]
+		if !ok {
+			// If the key doesn't exist, create a new list
+			rawValue = list.New()
+			data[key] = rawValue
+		}
+		
+		listValue, ok := rawValue.(*list.List)
+		if !ok {
+			return nil, fmt.Errorf(WRONGTYPE_ERROR)
+		}
+
+		for _, v := range values {
+			if command == "LPUSH" {
+				listValue.PushFront(v.Bulk)
+			} else {
+				listValue.PushBack(v.Bulk)
+			}
+		}
+		return fmt.Appendf(nil, ":%d\r\n", listValue.Len()), nil
+
+	case "LPOP", "RPOP":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(command))
+		}
+		key := string(args[0].Bulk)
+		mu.Lock()
+		defer mu.Unlock()
+		
+		rawValue, ok := data[key]
+		if !ok {
+			return []byte("$-1\r\n"), nil // Key doesn't exist
+		}
+		listValue, ok := rawValue.(*list.List)
+		if !ok {
+			return nil, fmt.Errorf(WRONGTYPE_ERROR)
+		}
+		if listValue.Len() == 0 {
+			return []byte("$-1\r\n"), nil // List is empty
+		}
+
+		var element *list.Element
+		if command == "LPOP" {
+			element = listValue.Front()
+		} else {
+			element = listValue.Back()
+		}
+		
+		listValue.Remove(element)
+		// If the list is now empty, remove it from the map to free memory
+		if listValue.Len() == 0 {
+			delete(data, key)
+		}
+
+		value := element.Value.([]byte)
+		return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)), nil
+
 	case "REWRITEAOF":
 		if err := aof.Rewrite(); err != nil {
 			return nil, fmt.Errorf("ERR failed to rewrite AOF: %v", err)
@@ -92,12 +168,13 @@ func handleConnection(conn net.Conn, aof *Aof) {
 		// Pass the aof instance to applyCommand
 		response, err := applyCommand(obj, aof)
 		if err != nil {
-			conn.Write(fmt.Appendf(nil, "-%s\r\n", err.Error()))
+			conn.Write([]byte(fmt.Sprintf("-%s\r\n", err.Error())))
 			continue
 		}
 
+		// This simple check is still valid for identifying write commands
 		command := strings.ToUpper(string(obj.Array[0].Bulk))
-		if command == "SET" || command == "DEL" {
+		if command == "SET" || command == "DEL" || command == "LPUSH" || command == "RPUSH" || command == "LPOP" || command == "RPOP"{
 			if err := aof.Write(obj); err != nil {
 				log.Printf("Failed to write to AOF: %s", err.Error())
 			}
@@ -123,7 +200,6 @@ func loadAof(path string) error {
 			if err == io.EOF { break }
 			return err
 		}
-		// Pass nil for aof since we won't be rewriting during load
 		if _, err := applyCommand(obj, nil); err != nil {
 			log.Printf("Error applying command from AOF: %s", err.Error())
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/list"
 	"os"
 	"strconv"
 	"sync"
@@ -42,13 +43,11 @@ func (a *Aof) Write(obj RESPObject) error {
 	return err
 }
 
-// Rewrite creates a new, compact AOF file.
+// Rewrite now handles different data types in the store.
 func (a *Aof) Rewrite() error {
-	// We need a global read lock on the main data store while rewriting.
 	mu.RLock()
 	defer mu.RUnlock()
 
-	// 1. Create a temporary file.
 	tmpPath := a.path + ".tmp"
 	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
@@ -56,26 +55,38 @@ func (a *Aof) Rewrite() error {
 	}
 	defer tmpFile.Close()
 
-	// 2. Iterate over the in-memory data and write a SET command for each key.
+	// Iterate over the data and generate the appropriate command for each type.
 	for key, value := range data {
-		// Construct a SET command as a RESPObject
-		setCmd := RESPObject{
-			Type: ArrayPrefix,
-			Array: []RESPObject{
-				{Type: BulkStringPrefix, Bulk: []byte("SET")},
-				{Type: BulkStringPrefix, Bulk: []byte(key)},
-				{Type: BulkStringPrefix, Bulk: value},
-			},
+		var cmd RESPObject
+
+		switch v := value.(type) {
+		case []byte:
+			// Generate a SET command for strings.
+			cmd = RESPObject{
+				Type: ArrayPrefix,
+				Array: []RESPObject{
+					{Type: BulkStringPrefix, Bulk: []byte("SET")},
+					{Type: BulkStringPrefix, Bulk: []byte(key)},
+					{Type: BulkStringPrefix, Bulk: v},
+				},
+			}
+		case *list.List:
+			// Generate a single RPUSH command with all elements for lists.
+			elements := make([]RESPObject, 0, v.Len()+2)
+			elements = append(elements, RESPObject{Type: BulkStringPrefix, Bulk: []byte("RPUSH")})
+			elements = append(elements, RESPObject{Type: BulkStringPrefix, Bulk: []byte(key)})
+			for e := v.Front(); e != nil; e = e.Next() {
+				elements = append(elements, RESPObject{Type: BulkStringPrefix, Bulk: e.Value.([]byte)})
+			}
+			cmd = RESPObject{Type: ArrayPrefix, Array: elements}
 		}
-		
-		// Write the command to the temporary file
-		if _, err := tmpFile.Write(setCmd.ToBytes()); err != nil {
+
+		if _, err := tmpFile.Write(cmd.ToBytes()); err != nil {
 			return err
 		}
 	}
-	
-	// 3. Atomically replace the old AOF file with the new one.
-	// First, we must close the current AOF file before renaming.
+
+	// Atomically replace the old file.
 	a.mu.Lock()
 	a.file.Close()
 	a.mu.Unlock()
@@ -84,7 +95,6 @@ func (a *Aof) Rewrite() error {
 		return err
 	}
 
-	// 4. Re-open the AOF file for appending future commands.
 	f, err := os.OpenFile(a.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return err
@@ -97,7 +107,6 @@ func (a *Aof) Rewrite() error {
 }
 
 // ToBytes serializes an RESPObject back to the RESP wire format
-// (This function remains unchanged)
 func (o RESPObject) ToBytes() []byte {
 	switch o.Type {
 	case ArrayPrefix:
