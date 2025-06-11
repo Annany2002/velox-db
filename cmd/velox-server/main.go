@@ -10,9 +10,8 @@ import (
 	"strings"
 )
 
-// applyCommand encapsulates the logic for executing a command against the data store.
-// It is now separate from the network handling.
-func applyCommand(obj RESPObject) ([]byte, error) {
+// applyCommand now takes an Aof instance to handle the REWRITEAOF command.
+func applyCommand(obj RESPObject, aof *Aof) ([]byte, error) {
 	if obj.Type != ArrayPrefix || len(obj.Array) == 0 {
 		return nil, fmt.Errorf("invalid command format: not an array")
 	}
@@ -55,9 +54,7 @@ func applyCommand(obj RESPObject) ([]byte, error) {
 		var deletedCount int
 		mu.Lock()
 		for _, arg := range args {
-			if arg.Type != BulkStringPrefix {
-				continue
-			}
+			if arg.Type != BulkStringPrefix { continue }
 			key := string(arg.Bulk)
 			if _, ok := data[key]; ok {
 				delete(data, key)
@@ -65,7 +62,13 @@ func applyCommand(obj RESPObject) ([]byte, error) {
 			}
 		}
 		mu.Unlock()
-		return []byte(fmt.Sprintf(":%d\r\n", deletedCount)), nil
+		return fmt.Appendf(nil, ":%d\r\n", deletedCount), nil
+	// New command to trigger AOF rewrite
+	case "REWRITEAOF":
+		if err := aof.Rewrite(); err != nil {
+			return nil, fmt.Errorf("ERR failed to rewrite AOF: %v", err)
+		}
+		return []byte("+OK\r\n"), nil
 	default:
 		return nil, fmt.Errorf("ERR unknown command '%s'", command)
 	}
@@ -86,14 +89,13 @@ func handleConnection(conn net.Conn, aof *Aof) {
 			return
 		}
 
-		response, err := applyCommand(obj)
+		// Pass the aof instance to applyCommand
+		response, err := applyCommand(obj, aof)
 		if err != nil {
-			conn.Write([]byte(fmt.Sprintf("-%s\r\n", err.Error())))
+			conn.Write(fmt.Appendf(nil, "-%s\r\n", err.Error()))
 			continue
 		}
 
-		// Write to AOF for write commands (SET, DEL)
-		// We can identify write commands by the response or the command name
 		command := strings.ToUpper(string(obj.Array[0].Bulk))
 		if command == "SET" || command == "DEL" {
 			if err := aof.Write(obj); err != nil {
@@ -105,14 +107,10 @@ func handleConnection(conn net.Conn, aof *Aof) {
 	}
 }
 
-// loadAof reads commands from the AOF file and applies them to the in-memory store.
 func loadAof(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		// If the file doesn't exist, that's okay. It's a fresh start.
-		if os.IsNotExist(err) {
-			return nil
-		}
+		if os.IsNotExist(err) { return nil }
 		return err
 	}
 	defer file.Close()
@@ -122,16 +120,12 @@ func loadAof(path string) error {
 	for {
 		obj, err := reader.ReadObject()
 		if err != nil {
-			// io.EOF means we've successfully read the whole file.
-			if err == io.EOF {
-				break
-			}
+			if err == io.EOF { break }
 			return err
 		}
-		// We apply the command but don't need the response here.
-		if _, err := applyCommand(obj); err != nil {
+		// Pass nil for aof since we won't be rewriting during load
+		if _, err := applyCommand(obj, nil); err != nil {
 			log.Printf("Error applying command from AOF: %s", err.Error())
-			// Continue loading other commands even if one is malformed.
 		}
 	}
 	log.Println("AOF data loaded successfully.")
@@ -141,7 +135,6 @@ func loadAof(path string) error {
 func main() {
 	aofPath := "velox-db.aof"
 
-	// Load data from AOF before doing anything else.
 	if err := loadAof(aofPath); err != nil {
 		log.Fatalf("Failed to load data from AOF: %s", err.Error())
 	}
