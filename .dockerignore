@@ -1,0 +1,37 @@
+# Exclude version control and metadata
+.git
+.gitignore
+
+# Exclude Docker config files (not needed in context)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Exclude IDE/editor and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Exclude Go build artifacts and test files
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Exclude local environment and config
+.env
+.air.toml
+
+# Exclude temp, cache, logs, and database files
+tmp/
+cache/
+*.log
+velox-db.aof
+*.aof
+
+# Exclude optional directories
+vendor/
+logo/

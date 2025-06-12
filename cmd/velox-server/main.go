@@ -9,8 +9,8 @@ import (
 )
 
 func main() {
-	const aofPath = "velox-db.aof"
-	addr := "localhost:6380"
+	const aofPath = "/data/velox-db.aof"
+	addr := ":6380"
 
 	// 1. Create a new store
 	s := store.New()

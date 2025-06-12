@@ -50,7 +50,6 @@ func New(s *store.Store, a *aof.Aof) *Server {
 
 // Start begins listening for client connections.
 func (s *Server) Start(addr string) error {
-	// ... This function remains unchanged ...
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to bind to address %s: %w", addr, err)

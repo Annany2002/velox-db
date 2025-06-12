@@ -1,0 +1,12 @@
+services:
+  velox-db:
+    build: .
+    container_name: velox-db-server
+    ports:
+      - "6380:6380"
+    volumes:
+      - velox-db-data:/data
+    restart: unless-stopped
+
+volumes:
+  velox-db-data:

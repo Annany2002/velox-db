@@ -58,8 +58,9 @@ The server is stable, compatible with standard Redis clients, and its new archit
 
 - Go 1.22 or later
 - `redis-cli` (or another Redis client) for testing
+- Docker and Docker Compose (for containerized deployment)
 
-### Standard Execution
+### Standard Execution (Local)
 
 1.  Clone the repository:
     ```sh
@@ -74,22 +75,35 @@ The server is stable, compatible with standard Redis clients, and its new archit
     go run .
     ```
 
-### Development with Hot Reload
+### Running with Docker Compose
 
-1.  Install Air (if not already installed):
-    ```sh
-    go install github.com/air-verse/air@latest
-    ```
-2.  Navigate to the application's entrypoint directory:
-    ```sh
-    cd velox-db/cmd/velox-server
-    ```
-3.  Start the server with Air:
-    ```sh
-    air
-    ```
+1. Build and start the server with Docker Compose:
 
-The server will start listening on `localhost:6380`.
+   ```sh
+   docker compose up --build
+   ```
+
+   This will:
+
+   - Build the VeloxDB image
+   - Expose port 6380
+   - Persist the AOF file in a Docker volume at `/data/velox-db.aof`
+
+2. Connect using any Redis client:
+   ```sh
+   redis-cli -p 6380
+   ```
+
+### Running with Docker (manual)
+
+1. Build the Docker image:
+   ```sh
+   docker build -t velox-db:local .
+   ```
+2. Run the container with a persistent volume:
+   ```sh
+   docker run -v velox-db-data:/data --name velox-db -p 6380:6380 velox-db:local
+   ```
 
 ## 🧪 Testing the Server
 
@@ -145,7 +159,8 @@ The project's architecture is now organized into decoupled packages, promoting a
 │       └── store.go      # Handles the in-memory, concurrent-safe, generic data store.
 ├── .air.toml
 ├── go.mod
-└── velox-db.aof
+├── docker-compose.yml
+└── velox-db.aof (created at runtime in /data/ when using Docker)
 ```
 
 ### Key Components
