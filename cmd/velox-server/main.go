@@ -17,6 +17,7 @@ func main() {
 
 	// 2. Load from AOF into the store
 	log.Println("Loading data from AOF file...")
+	
 	cmdChan, err := aof.Load(aofPath)
 	if err != nil {
 		log.Fatalf("Failed to load AOF file: %v", err)
