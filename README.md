@@ -10,54 +10,54 @@ VeloxDB is a high-performance, in-memory database built from scratch in Go, insp
 
 The project has evolved into a feature-rich, **multi-data-structure database** with a durable persistence layer and a highly modular internal architecture. Key milestones completed include:
 
-  - A generic storage engine supporting multiple data types.
-  - Full implementation of **String** and **List** data structures.
-  - A complete, recoverable **AOF persistence** mechanism.
-  - An advanced **AOF compaction** feature (`REWRITEAOF`).
-  - A professional, decoupled internal package structure.
+- A generic storage engine supporting multiple data types.
+- Full implementation of **String** and **List** data structures.
+- A complete, recoverable **AOF persistence** mechanism.
+- An advanced **AOF compaction** feature (`REWRITEAOF`).
+- A professional, decoupled internal package structure.
 
 The server is stable, compatible with standard Redis clients, and its new architecture makes adding future data structures (like Hashes and Sets) straightforward.
 
 ## ✨ Key Features
 
-  - **Modular Architecture**: Logic is cleanly separated into distinct packages (`server`, `store`, `aof`, `resp`), promoting maintainability and testability.
-  - **Multi-Data Structure Support**: Natively supports Strings and Lists.
-  - **Extensible Command Dispatcher**: Uses a command table (map) instead of a large switch statement, making new command additions trivial.
-  - **Concurrent TCP Server**: Handles multiple clients simultaneously using a goroutine-per-connection model.
-  - **Full RESP Protocol Support**: A compliant parser and serializer for the Redis Serialization Protocol.
-  - **AOF Persistence & Recovery**: All write operations are logged to disk for durability and automatically restored on startup.
-  - **AOF Compaction**: Features a `REWRITEAOF` command to compact the AOF log, saving space and speeding up recovery.
-  - **Concurrent-Safe Generic Storage**: A thread-safe data store using `map[string]interface{}` and `RWMutex`.
+- **Modular Architecture**: Logic is cleanly separated into distinct packages (`server`, `store`, `aof`, `resp`), promoting maintainability and testability.
+- **Multi-Data Structure Support**: Natively supports Strings and Lists.
+- **Extensible Command Dispatcher**: Uses a command table (map) instead of a large switch statement, making new command additions trivial.
+- **Concurrent TCP Server**: Handles multiple clients simultaneously using a goroutine-per-connection model.
+- **Full RESP Protocol Support**: A compliant parser and serializer for the Redis Serialization Protocol.
+- **AOF Persistence & Recovery**: All write operations are logged to disk for durability and automatically restored on startup.
+- **AOF Compaction**: Features a `REWRITEAOF` command to compact the AOF log, saving space and speeding up recovery.
+- **Concurrent-Safe Generic Storage**: A thread-safe data store using `map[string]interface{}` and `RWMutex`.
 
 ## 🔧 Supported Commands
 
 ### String Commands
 
-  - **`PING`**
-  - **`SET key value`**
-  - **`GET key`**
-  - **`DEL key [key ...]`**
+- **`PING`**
+- **`SET key value`**
+- **`GET key`**
+- **`DEL key [key ...]`**
 
 ### List Commands
 
-  - **`LPUSH key value [value ...]`**
-  - **`RPUSH key value [value ...]`**
-  - **`LPOP key`**
-  - **`RPOP key`**
-  - **`LLEN key`**
-  - **`LINDEX key index`**
-  - **`LRANGE key start stop`**
+- **`LPUSH key value [value ...]`**
+- **`RPUSH key value [value ...]`**
+- **`LPOP key`**
+- **`RPOP key`**
+- **`LLEN key`**
+- **`LINDEX key index`**
+- **`LRANGE key start stop`**
 
 ### Server Commands
 
-  - **`REWRITEAOF`**
+- **`REWRITEAOF`**
 
 ## ⚙️ How to Run
 
 ### Prerequisites
 
-  - Go 1.22 or later
-  - `redis-cli` (or another Redis client) for testing
+- Go 1.22 or later
+- `redis-cli` (or another Redis client) for testing
 
 ### Standard Execution
 
@@ -80,7 +80,11 @@ The server is stable, compatible with standard Redis clients, and its new archit
     ```sh
     go install github.com/air-verse/air@latest
     ```
-2.  From the project's root directory (`velox-db`), start the server with Air:
+2.  Navigate to the application's entrypoint directory:
+    ```sh
+    cd velox-db/cmd/velox-server
+    ```
+3.  Start the server with Air:
     ```sh
     air
     ```
@@ -148,18 +152,18 @@ The project's architecture is now organized into decoupled packages, promoting a
 
 #### Command Dispatcher
 
-  - The server uses a **dispatch table** (`map[string]commandFunc`) to map command strings directly to their handler functions. This replaces a large `switch` statement, making the code more extensible and readable.
+- The server uses a **dispatch table** (`map[string]commandFunc`) to map command strings directly to their handler functions. This replaces a large `switch` statement, making the code more extensible and readable.
 
 #### Storage Engine
 
-  - **Generic In-Memory Map**: Uses `map[string]interface{}` to store different data structures (strings, lists, etc.) under a single key space.
-  - **Type Assertion**: Employs runtime type checking to ensure commands operate on the correct data types, returning a `(error) WRONGTYPE` for mismatches.
+- **Generic In-Memory Map**: Uses `map[string]interface{}` to store different data structures (strings, lists, etc.) under a single key space.
+- **Type Assertion**: Employs runtime type checking to ensure commands operate on the correct data types, returning a `(error) WRONGTYPE` for mismatches.
 
 #### Persistence Layer (AOF)
 
-  - **Type-Aware Rewriting**: The compaction logic inspects the type of each data structure in memory to generate the most efficient set of commands for the new AOF file (e.g., a single `RPUSH` for a whole list).
+- **Type-Aware Rewriting**: The compaction logic inspects the type of each data structure in memory to generate the most efficient set of commands for the new AOF file (e.g., a single `RPUSH` for a whole list).
 
 #### Concurrency Model
 
-  - **Goroutine per Connection**: Each client connection is handled in its own dedicated goroutine.
-  - **Decoupled Locking**: The `store` package manages its own `RWMutex`, ensuring data integrity without exposing locking logic to the server layer.
+- **Goroutine per Connection**: Each client connection is handled in its own dedicated goroutine.
+- **Decoupled Locking**: The `store` package manages its own `RWMutex`, ensuring data integrity without exposing locking logic to the server layer.
