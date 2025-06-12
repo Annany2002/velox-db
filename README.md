@@ -1,36 +1,63 @@
-<p align="center">
-  <img src="./logo/velox.png" alt="VeloxDB Logo" width="200" height="200"/>
-</p>
+<p align="center"\>
+<img src="./logo/velox.png" alt="VeloxDB Logo" width="200" height="200"/\>
+</p\>
 
 # VeloxDB
 
-VeloxDB is a high-performance, in-memory database built from scratch in Go, inspired by the architecture of Redis. This project implements core Redis functionalities, including full RESP protocol support and AOF data persistence, serving as a deep dive into database internals and concurrent programming in Go.
+VeloxDB is a high-performance, in-memory database built from scratch in Go, inspired by the architecture of Redis. This project implements core Redis functionalities and data structures with a clean, modular architecture. It features full RESP protocol support and AOF data persistence, serving as a deep dive into database internals and concurrent programming in Go.
 
-## Project Status
+## ✅ Project Status
 
-The project has successfully implemented a robust, persistent key-value store. The core MVP is complete, including full data persistence and recovery via an Append-Only File (AOF). The server is stable, compatible with standard Redis clients, and serves as a strong foundation for future feature development.
+The project has evolved into a feature-rich, **multi-data-structure database** with a durable persistence layer and a highly modular internal architecture. Key milestones completed include:
 
-### Key Features
+  - A generic storage engine supporting multiple data types.
+  - Full implementation of **String** and **List** data structures.
+  - A complete, recoverable **AOF persistence** mechanism.
+  - An advanced **AOF compaction** feature (`REWRITEAOF`).
+  - A professional, decoupled internal package structure.
 
-- **Concurrent TCP Server**: Handles multiple clients simultaneously using a goroutine-per-connection model.
-- **Full RESP Protocol Support**: A compliant parser and serializer for the Redis Serialization Protocol, making it compatible with any Redis client.
-- **AOF (Append-Only File) Persistence & Recovery**: All write operations (`SET`, `DEL`) are logged to disk for durability. The database state is automatically restored from the AOF on startup.
-- **Concurrent-Safe In-Memory Storage**: A thread-safe data store using `RWMutex` to allow for high-performance concurrent reads.
-- **Hot Reload Development**: Configured with Air for efficient, live-reloading development (as implemented by you).
+The server is stable, compatible with standard Redis clients, and its new architecture makes adding future data structures (like Hashes and Sets) straightforward.
 
-## Project Goals
+## ✨ Key Features
 
-- To gain a fundamental understanding of how in-memory databases like Redis work.
-- To apply concurrent programming patterns in Go to solve real-world problems.
-- To implement a network protocol (RESP) from scratch.
-- To explore different database persistence strategies, starting with AOF.
+  - **Modular Architecture**: Logic is cleanly separated into distinct packages (`server`, `store`, `aof`, `resp`), promoting maintainability and testability.
+  - **Multi-Data Structure Support**: Natively supports Strings and Lists.
+  - **Extensible Command Dispatcher**: Uses a command table (map) instead of a large switch statement, making new command additions trivial.
+  - **Concurrent TCP Server**: Handles multiple clients simultaneously using a goroutine-per-connection model.
+  - **Full RESP Protocol Support**: A compliant parser and serializer for the Redis Serialization Protocol.
+  - **AOF Persistence & Recovery**: All write operations are logged to disk for durability and automatically restored on startup.
+  - **AOF Compaction**: Features a `REWRITEAOF` command to compact the AOF log, saving space and speeding up recovery.
+  - **Concurrent-Safe Generic Storage**: A thread-safe data store using `map[string]interface{}` and `RWMutex`.
 
-## How to Run
+## 🔧 Supported Commands
+
+### String Commands
+
+  - **`PING`**
+  - **`SET key value`**
+  - **`GET key`**
+  - **`DEL key [key ...]`**
+
+### List Commands
+
+  - **`LPUSH key value [value ...]`**
+  - **`RPUSH key value [value ...]`**
+  - **`LPOP key`**
+  - **`RPOP key`**
+  - **`LLEN key`**
+  - **`LINDEX key index`**
+  - **`LRANGE key start stop`**
+
+### Server Commands
+
+  - **`REWRITEAOF`**
+
+## ⚙️ How to Run
 
 ### Prerequisites
 
-- Go 1.22 or later
-- `redis-cli` (or another Redis client) for testing
+  - Go 1.22 or later
+  - `redis-cli` (or another Redis client) for testing
 
 ### Standard Execution
 
@@ -38,7 +65,7 @@ The project has successfully implemented a robust, persistent key-value store. T
     ```sh
     git clone https://github.com/Annany2002/velox-db
     ```
-2.  Navigate to the server's directory:
+2.  Navigate to the application's entrypoint directory:
     ```sh
     cd velox-db/cmd/velox-server
     ```
@@ -60,66 +87,79 @@ The project has successfully implemented a robust, persistent key-value store. T
 
 The server will start listening on `localhost:6380`.
 
-## Testing the Server
+## 🧪 Testing the Server
 
-### Using `redis-cli`
-
-In a new terminal, connect to the server:
+Connect using any Redis client.
 
 ```sh
 redis-cli -p 6380
 ```
 
-You will see the `127.0.0.1:6380>` prompt.
-
-**Example Session:**
+**Example String Session:**
 
 ```
-127.0.0.1:6380> PING
-PONG
 127.0.0.1:6380> SET mykey "hello world"
 OK
 127.0.0.1:6380> GET mykey
 "hello world"
-127.0.0.1:6380> SET user:1 "John Doe"
-OK
-127.0.0.1:6380> DEL mykey
-(integer) 1
-127.0.0.1:6380> GET mykey
-(nil)
 ```
 
-## Architecture
+**Example List Session:**
 
-The project is organized into modular components, each with a specific responsibility.
+```
+127.0.0.1:6380> RPUSH tasks "review code" "deploy feature" "write tests"
+(integer) 3
+127.0.0.1:6380> LLEN tasks
+(integer) 3
+127.0.0.1:6380> LRANGE tasks 0 -1
+1) "review code"
+2) "deploy feature"
+3) "write tests"
+127.0.0.1:6380> LPOP tasks
+"review code"
+```
+
+## 🏗️ Architecture
+
+The project's architecture is now organized into decoupled packages, promoting a clean separation of concerns.
 
 ### File Structure
 
-- **`main.go`**: Initializes the server, loads data from the AOF, listens for TCP connections, and dispatches connections to handlers.
-- **`aof.go`**: Manages all Append-Only File operations, including writing commands and serializing objects to RESP format.
-- **`resp.go`**: Contains the complete implementation of the RESP parser and data structures.
-- **`store.go`**: Defines the thread-safe, in-memory `map[string][]byte` data store.
-- **`.air.toml`**: Development hot-reload configuration.
+```
+/velox-db
+├── cmd/
+│   └── velox-server/
+│       └── main.go       # Application entrypoint: wires all components together.
+├── internal/
+│   ├── aof/
+│   │   └── aof.go        # Handles AOF persistence, recovery, and rewriting.
+│   ├── resp/
+│   │   └── resp.go       # Handles RESP protocol parsing and serialization.
+│   ├── server/
+│   │   └── server.go     # Handles TCP server, connection loop, and command dispatching.
+│   └── store/
+│       └── store.go      # Handles the in-memory, concurrent-safe, generic data store.
+├── .air.toml
+├── go.mod
+└── velox-db.aof
+```
 
 ### Key Components
 
-#### Concurrency Model
+#### Command Dispatcher
 
-- **Goroutine per Connection**: Each client connection is handled in a dedicated goroutine for high concurrency.
-- **Shared State Protection**: The in-memory store is protected by a `sync.RWMutex` (multiple readers, single writer), while the AOF file is protected by a `sync.Mutex` to ensure sequential writes.
+  - The server uses a **dispatch table** (`map[string]commandFunc`) to map command strings directly to their handler functions. This replaces a large `switch` statement, making the code more extensible and readable.
+
+#### Storage Engine
+
+  - **Generic In-Memory Map**: Uses `map[string]interface{}` to store different data structures (strings, lists, etc.) under a single key space.
+  - **Type Assertion**: Employs runtime type checking to ensure commands operate on the correct data types, returning a `(error) WRONGTYPE` for mismatches.
 
 #### Persistence Layer (AOF)
 
-- **Durable Writes**: All `SET` and `DEL` commands are written to `velox-db.aof`.
-- **Startup Recovery**: The server reads and executes all commands from the AOF file upon startup to rehydrate the in-memory state.
-- **RESP Format**: Commands are stored in their native, byte-for-byte RESP format for consistency and simplicity.
+  - **Type-Aware Rewriting**: The compaction logic inspects the type of each data structure in memory to generate the most efficient set of commands for the new AOF file (e.g., a single `RPUSH` for a whole list).
 
-#### RESP Parser
+#### Concurrency Model
 
-- **Streaming Parser**: A `bufio.Reader`-based parser that efficiently reads from the network stream.
-- **Unified `RESPObject`**: A single struct represents all five RESP data types, simplifying command processing.
-- **Binary Safe**: Correctly handles any binary data within keys or values via RESP Bulk Strings.
-
-## Requirements
-
-- Go 1.22 or later.
+  - **Goroutine per Connection**: Each client connection is handled in its own dedicated goroutine.
+  - **Decoupled Locking**: The `store` package manages its own `RWMutex`, ensuring data integrity without exposing locking logic to the server layer.
