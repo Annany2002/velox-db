@@ -88,6 +88,16 @@ func (a *Aof) Rewrite(s *store.Store) error {
 				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: val})
 			}
 			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
+		
+		case map[string]struct{}:
+			// Generate a single SADD command with all members for the set.
+			elements := make([]resp.Object, 0, len(v)+2)
+			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte("SADD")})
+			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(key)})
+			for member := range v {
+				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(member)})
+			}
+			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
 		}
 
 		if _, err := tmpFile.Write(cmd.ToBytes()); err != nil {

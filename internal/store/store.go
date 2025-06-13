@@ -79,15 +79,6 @@ func (s *Store) GetOrCreateList(key string) (*list.List, error) {
 	return l, nil
 }
 
-// ForEach iterates over the data store. A read lock is held during iteration.
-func (s *Store) ForEach(f func(key string, value interface{})) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for key, value := range s.data {
-		f(key, value)
-	}
-}
-
 // GetOrCreateHash retrieves a hash or creates it if it doesn't exist.
 // This must be called within a write lock.
 func (s *Store) GetOrCreateHash(key string) (map[string][]byte, error) {
@@ -118,6 +109,47 @@ func (s *Store) GetHash(key string) (map[string][]byte, bool) {
 	}
 	h, ok := raw.(map[string][]byte)
 	return h, ok
+}
+
+// GetOrCreateSet retrieves a set or creates it if it doesn't exist.
+// This must be called within a write lock.
+func (s *Store) GetOrCreateSet(key string) (map[string]struct{}, error) {
+	raw, ok := s.data[key]
+	if !ok {
+		// If the key doesn't exist, create a new set.
+		set := make(map[string]struct{})
+		s.data[key] = set
+		return set, nil
+	}
+
+	// If the key exists, ensure it's a set.
+	set, ok := raw.(map[string]struct{})
+	if !ok {
+		return nil, fmt.Errorf("key holds a non-set value")
+	}
+	return set, nil
+}
+
+// GetSet retrieves a set value for a key.
+// The first bool indicates if the key exists and is a set.
+func (s *Store) GetSet(key string) (map[string]struct{}, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	raw, ok := s.data[key]
+	if !ok {
+		return nil, false
+	}
+	set, ok := raw.(map[string]struct{})
+	return set, ok
+}
+
+// ForEach iterates over the data store. A read lock is held during iteration.
+func (s *Store) ForEach(f func(key string, value interface{})) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for key, value := range s.data {
+		f(key, value)
+	}
 }
 
 // Lock acquires a write lock on the store.

@@ -56,6 +56,12 @@ func New(s *store.Store, a *aof.Aof) *Server {
 		"HGET":    srv.handleHGet,
 		"HGETALL": srv.handleHGetAll,
 		"HDEL":    srv.handleHDel,
+
+		// Set commands
+		"SADD":      srv.handleSAdd,
+		"SREM":      srv.handleSRem,
+		"SISMEMBER": srv.handleSIsMember,
+		"SMEMBERS":  srv.handleSMembers,
 	}
 	return srv
 }
@@ -105,7 +111,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 		conn.Write(response)
 
 		command := strings.ToUpper(string(obj.Array[0].Bulk))
-		writeCmds := map[string]bool{"SET": true, "DEL": true, "LPUSH": true, "RPUSH": true, "LPOP": true, "RPOP": true}
+		writeCmds := map[string]bool{
+			"SET": true, "DEL": true, 
+			"LPUSH": true, "RPUSH": true, "LPOP": true, "RPOP": true, 
+			"HSET": true, "HDEL": true,
+			"SADD": true, "SREM": true,
+		}
 		if writeCmds[command] {
 			if err := s.aof.Write(obj); err != nil {
 				log.Printf("Failed to write to AOF: %s", err.Error())
@@ -472,4 +483,106 @@ func (s *Server) handleHDel(args []resp.Object) ([]byte, error) {
 	}
 
 	return []byte(fmt.Sprintf(":%d\r\n", deletedCount)), nil
+}
+
+// handleSAdd handles the SADD command.
+// SADD key member [member ...]
+func (s *Server) handleSAdd(args []resp.Object) ([]byte, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'sadd' command")
+	}
+	key := string(args[0].Bulk)
+	members := args[1:]
+
+	s.store.Lock()
+	defer s.store.Unlock()
+
+	set, err := s.store.GetOrCreateSet(key)
+	if err != nil {
+		return nil, fmt.Errorf(resp.WRONGTYPE_ERROR)
+	}
+
+	var addedCount int
+	for _, member := range members {
+		if _, ok := set[string(member.Bulk)]; !ok {
+			set[string(member.Bulk)] = struct{}{}
+			addedCount++
+		}
+	}
+	return []byte(fmt.Sprintf(":%d\r\n", addedCount)), nil
+}
+
+// handleSRem handles the SREM command.
+// SREM key member [member ...]
+func (s *Server) handleSRem(args []resp.Object) ([]byte, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'srem' command")
+	}
+	key := string(args[0].Bulk)
+	members := args[1:]
+
+	s.store.Lock()
+	defer s.store.Unlock()
+	
+	set, ok := s.store.GetSet(key)
+	if !ok {
+		return []byte(":0\r\n"), nil
+	}
+
+	var removedCount int
+	for _, member := range members {
+		if _, ok := set[string(member.Bulk)]; ok {
+			delete(set, string(member.Bulk))
+			removedCount++
+		}
+	}
+
+	// If the set is now empty, delete the key itself.
+	if len(set) == 0 {
+		s.store.Del(key)
+	}
+
+	return []byte(fmt.Sprintf(":%d\r\n", removedCount)), nil
+}
+
+// handleSIsMember handles the SISMEMBER command.
+// SISMEMBER key member
+func (s *Server) handleSIsMember(args []resp.Object) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'sismember' command")
+	}
+	key := string(args[0].Bulk)
+	member := string(args[1].Bulk)
+
+	set, ok := s.store.GetSet(key)
+	if !ok {
+		return []byte(":0\r\n"), nil // Key doesn't exist, so not a member.
+	}
+
+	if _, ok := set[member]; ok {
+		return []byte(":1\r\n"), nil // Is a member.
+	}
+
+	return []byte(":0\r\n"), nil // Is not a member.
+}
+
+// handleSMembers handles the SMEMBERS command.
+// SMEMBERS key
+func (s *Server) handleSMembers(args []resp.Object) ([]byte, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'smembers' command")
+	}
+	key := string(args[0].Bulk)
+
+	set, ok := s.store.GetSet(key)
+	if !ok {
+		return []byte("*0\r\n"), nil // Return empty array.
+	}
+
+	results := make([]resp.Object, 0, len(set))
+	for member := range set {
+		results = append(results, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(member)})
+	}
+
+	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
 }

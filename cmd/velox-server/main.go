@@ -4,14 +4,21 @@ import (
 	"log"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/Annany2002/velox-db/internal/aof"
 	"github.com/Annany2002/velox-db/internal/server"
 	"github.com/Annany2002/velox-db/internal/store"
 )
 
 func main() {
+	// Load environment variables from .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found")
+	}
+
 	// Get AOF path from environment variable, default to tmp/velox-db.aof
 	aofPath := os.Getenv("VELOX_AOF_PATH")
+	log.Println("AOF path:", aofPath)
 	if aofPath == "" {
 		aofPath = "tmp/velox-db.aof"
 	}
