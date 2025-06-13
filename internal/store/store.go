@@ -88,6 +88,38 @@ func (s *Store) ForEach(f func(key string, value interface{})) {
 	}
 }
 
+// GetOrCreateHash retrieves a hash or creates it if it doesn't exist.
+// This must be called within a write lock.
+func (s *Store) GetOrCreateHash(key string) (map[string][]byte, error) {
+	raw, ok := s.data[key]
+	if !ok {
+		// If the key doesn't exist, create a new hash.
+		h := make(map[string][]byte)
+		s.data[key] = h
+		return h, nil
+	}
+
+	// If the key exists, ensure it's a hash.
+	h, ok := raw.(map[string][]byte)
+	if !ok {
+		return nil, fmt.Errorf("key holds a non-hash value")
+	}
+	return h, nil
+}
+
+// GetHash retrieves a hash value for a key.
+// The first bool indicates if the key exists and is a hash.
+func (s *Store) GetHash(key string) (map[string][]byte, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	raw, ok := s.data[key]
+	if !ok {
+		return nil, false
+	}
+	h, ok := raw.(map[string][]byte)
+	return h, ok
+}
+
 // Lock acquires a write lock on the store.
 func (s *Store) Lock() {
 	s.mu.Lock()

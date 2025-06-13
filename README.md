@@ -21,7 +21,7 @@ The server is stable, compatible with standard Redis clients, and its new archit
 ## ✨ Key Features
 
 - **Modular Architecture**: Logic is cleanly separated into distinct packages (`server`, `store`, `aof`, `resp`), promoting maintainability and testability.
-- **Multi-Data Structure Support**: Natively supports Strings and Lists.
+- **Multi-Data Structure Support**: Natively supports Strings, Lists, and Hashes.
 - **Extensible Command Dispatcher**: Uses a command table (map) instead of a large switch statement, making new command additions trivial.
 - **Concurrent TCP Server**: Handles multiple clients simultaneously using a goroutine-per-connection model.
 - **Full RESP Protocol Support**: A compliant parser and serializer for the Redis Serialization Protocol.
@@ -47,6 +47,13 @@ The server is stable, compatible with standard Redis clients, and its new archit
 - **`LLEN key`**
 - **`LINDEX key index`**
 - **`LRANGE key start stop`**
+
+### Hash Commands
+
+- **`HSET key field value [field value ...]`**
+- **`HGET key field`**
+- **`HGETALL key`**
+- **`HDEL key field [field ...]`**
 
 ### Server Commands
 
@@ -74,6 +81,20 @@ The server is stable, compatible with standard Redis clients, and its new archit
     ```sh
     go run .
     ```
+
+### Running with Air (Hot Reload)
+
+[Air](https://github.com/cosmtrek/air) provides live reloading for Go applications. This project includes a pre-configured `.air.toml` file for convenience.
+
+1. Install Air (if not already installed):
+   ```sh
+   go install github.com/cosmtrek/air@latest
+   ```
+2. From the project root, run:
+   ```sh
+   air
+   ```
+   This will automatically rebuild and restart the server on code changes. The configuration in `.air.toml` ensures the correct entrypoint is used.
 
 ### Running with Docker Compose
 
@@ -135,6 +156,29 @@ OK
 3) "write tests"
 127.0.0.1:6380> LPOP tasks
 "review code"
+```
+
+**Example Hash Session:**
+
+```
+127.0.0.1:6380> HSET user:1 name "Alice" age "30" city "Paris"
+(integer) 3
+127.0.0.1:6380> HGET user:1 name
+"Alice"
+127.0.0.1:6380> HGETALL user:1
+1) "name"
+2) "Alice"
+3) "age"
+4) "30"
+5) "city"
+6) "Paris"
+127.0.0.1:6380> HDEL user:1 age
+(integer) 1
+127.0.0.1:6380> HGETALL user:1
+1) "name"
+2) "Alice"
+3) "city"
+4) "Paris"
 ```
 
 ## 🏗️ Architecture

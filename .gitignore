@@ -24,6 +24,7 @@ go.work
 
 # Temp files
 tmp
+data
 
 # AOF files
 *.aof

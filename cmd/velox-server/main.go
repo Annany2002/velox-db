@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/Annany2002/velox-db/internal/aof"
 	"github.com/Annany2002/velox-db/internal/server"
@@ -9,7 +10,11 @@ import (
 )
 
 func main() {
-	const aofPath = "/data/velox-db.aof"
+	// Get AOF path from environment variable, default to tmp/velox-db.aof
+	aofPath := os.Getenv("VELOX_AOF_PATH")
+	if aofPath == "" {
+		aofPath = "tmp/velox-db.aof"
+	}
 	addr := ":6380"
 
 	// 1. Create a new store

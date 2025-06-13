@@ -26,6 +26,7 @@ docker-compose*.yml
 .air.toml
 
 # Exclude temp, cache, logs, and database files
+data
 tmp/
 cache/
 *.log

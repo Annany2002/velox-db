@@ -33,9 +33,13 @@ func New(s *store.Store, a *aof.Aof) *Server {
 	// The command table is populated here.
 	srv.commands = map[string]commandFunc{
 		"PING":       srv.handlePing,
+
+		// String commands
 		"SET":        srv.handleSet,
 		"GET":        srv.handleGet,
 		"DEL":        srv.handleDel,
+		
+		// List commands
 		"LPUSH":      srv.handleLPush,
 		"RPUSH":      srv.handleRPush,
 		"LPOP":       srv.handleLPop,
@@ -43,7 +47,15 @@ func New(s *store.Store, a *aof.Aof) *Server {
 		"LLEN":       srv.handleLLen,
 		"LINDEX":     srv.handleLIndex,
 		"LRANGE":     srv.handleLRange,
+
+		// AOF commands
 		"REWRITEAOF": srv.handleRewriteAOF,
+
+		// Hash commands
+		"HSET":    srv.handleHSet,
+		"HGET":    srv.handleHGet,
+		"HGETALL": srv.handleHGetAll,
+		"HDEL":    srv.handleHDel,
 	}
 	return srv
 }
@@ -67,6 +79,8 @@ func (s *Server) Start(addr string) error {
 	}
 }
 
+// handleConnection handles a client connection.
+// It reads commands from the client and writes responses.
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	log.Printf("Client connected: %s", conn.RemoteAddr())
@@ -131,10 +145,14 @@ func (s *Server) ApplyCommandForLoad(obj resp.Object) error {
 
 // --- Individual Command Handlers ---
 
+// handlePing handles the PING command.
+// PING
 func (s *Server) handlePing(args []resp.Object) ([]byte, error) {
 	return []byte("+PONG\r\n"), nil
 }
 
+// handleSet handles the SET command.
+// SET key value
 func (s *Server) handleSet(args []resp.Object) ([]byte, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for 'set' command")
@@ -144,6 +162,8 @@ func (s *Server) handleSet(args []resp.Object) ([]byte, error) {
 	return []byte("+OK\r\n"), nil
 }
 
+// handleGet handles the GET command.
+// GET key
 func (s *Server) handleGet(args []resp.Object) ([]byte, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for 'get' command")
@@ -156,6 +176,8 @@ func (s *Server) handleGet(args []resp.Object) ([]byte, error) {
 	return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)), nil
 }
 
+// handleDel handles the DEL command.
+// DEL key [key ...]
 func (s *Server) handleDel(args []resp.Object) ([]byte, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for 'del' command")
@@ -169,14 +191,21 @@ func (s *Server) handleDel(args []resp.Object) ([]byte, error) {
 	return []byte(fmt.Sprintf(":%d\r\n", deletedCount)), nil
 }
 
+// handleLPush handles the LPUSH command.
+// LPUSH key value [value ...]
 func (s *Server) handleLPush(args []resp.Object) ([]byte, error) {
 	return s.pushToList("LPUSH", args)
 }
 
+// handleRPush handles the RPUSH command.
+// RPUSH key value [value ...]
 func (s *Server) handleRPush(args []resp.Object) ([]byte, error) {
 	return s.pushToList("RPUSH", args)
 }
 
+// pushToList handles the LPUSH and RPUSH commands.
+// LPUSH key value [value ...]
+// RPUSH key value [value ...]
 func (s *Server) pushToList(command string, args []resp.Object) ([]byte, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(command))
@@ -199,14 +228,21 @@ func (s *Server) pushToList(command string, args []resp.Object) ([]byte, error) 
 	return []byte(fmt.Sprintf(":%d\r\n", listValue.Len())), nil
 }
 
+// handleLPop handles the LPOP command.
+// LPOP key
 func (s *Server) handleLPop(args []resp.Object) ([]byte, error) {
 	return s.popFromList("LPOP", args)
 }
 
+// handleRPop handles the RPOP command.
+// RPOP key
 func (s *Server) handleRPop(args []resp.Object) ([]byte, error) {
 	return s.popFromList("RPOP", args)
 }
 
+// popFromList handles the LPOP and RPOP commands.
+// LPOP key
+// RPOP key
 func (s *Server) popFromList(command string, args []resp.Object) ([]byte, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(command))
@@ -232,6 +268,8 @@ func (s *Server) popFromList(command string, args []resp.Object) ([]byte, error)
 	return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)), nil
 }
 
+// handleLLen handles the LLEN command.
+// LLEN key
 func (s *Server) handleLLen(args []resp.Object) ([]byte, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for 'llen' command")
@@ -244,6 +282,8 @@ func (s *Server) handleLLen(args []resp.Object) ([]byte, error) {
 	return []byte(fmt.Sprintf(":%d\r\n", listValue.Len())), nil
 }
 
+// handleLIndex handles the LINDEX command.
+// LINDEX key index
 func (s *Server) handleLIndex(args []resp.Object) ([]byte, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for 'lindex' command")
@@ -274,6 +314,8 @@ func (s *Server) handleLIndex(args []resp.Object) ([]byte, error) {
 	return []byte("$-1\r\n"), nil
 }
 
+// handleLRange handles the LRANGE command.
+// LRANGE key start stop
 func (s *Server) handleLRange(args []resp.Object) ([]byte, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("ERR wrong number of arguments for 'lrange' command")
@@ -315,9 +357,119 @@ func (s *Server) handleLRange(args []resp.Object) ([]byte, error) {
 	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
 }
 
+// handleRewriteAOF handles the REWRITEAOF command.
+// REWRITEAOF
 func (s *Server) handleRewriteAOF(args []resp.Object) ([]byte, error) {
 	if err := s.aof.Rewrite(s.store); err != nil {
 		return nil, fmt.Errorf("ERR failed to rewrite AOF: %v", err)
 	}
 	return []byte("+OK\r\n"), nil
+}
+
+// handleHSet handles the HSET command.
+// HSET key field value [field value ...]
+func (s *Server) handleHSet(args []resp.Object) ([]byte, error) {
+	if len(args) < 3 || len(args)%2 != 1 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'hset' command")
+	}
+	key := string(args[0].Bulk)
+	
+	s.store.Lock()
+	defer s.store.Unlock()
+	
+	hash, err := s.store.GetOrCreateHash(key)
+	if err != nil {
+		return nil, fmt.Errorf(resp.WRONGTYPE_ERROR)
+	}
+
+	var fieldsAdded int
+	for i := 1; i < len(args); i += 2 {
+		field := string(args[i].Bulk)
+		value := args[i+1].Bulk
+		if _, ok := hash[field]; !ok {
+			fieldsAdded++
+		}
+		hash[field] = value
+	}
+
+	return []byte(fmt.Sprintf(":%d\r\n", fieldsAdded)), nil
+}
+
+// handleHGet handles the HGET command.
+// HGET key field
+func (s *Server) handleHGet(args []resp.Object) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'hget' command")
+	}
+	key := string(args[0].Bulk)
+	field := string(args[1].Bulk)
+
+	hash, ok := s.store.GetHash(key)
+	if !ok {
+		return []byte("$-1\r\n"), nil // Key doesn't exist or is wrong type
+	}
+
+	value, ok := hash[field]
+	if !ok {
+		return []byte("$-1\r\n"), nil // Field doesn't exist
+	}
+
+	return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)), nil
+}
+
+// handleHGetAll handles the HGETALL command.
+// HGETALL key
+func (s *Server) handleHGetAll(args []resp.Object) ([]byte, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'hgetall' command")
+	}
+	key := string(args[0].Bulk)
+
+	hash, ok := s.store.GetHash(key)
+	if !ok {
+		return []byte("*0\r\n"), nil // Return empty array for non-existent or wrong type key
+	}
+
+	// Create a RESP array of field-value pairs.
+	results := make([]resp.Object, 0, 2*len(hash))
+	for field, value := range hash {
+		results = append(results, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(field)})
+		results = append(results, resp.Object{Type: resp.BulkStringPrefix, Bulk: value})
+	}
+
+	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
+}
+
+// handleHDel handles the HDEL command.
+// HDEL key field [field ...]
+func (s *Server) handleHDel(args []resp.Object) ([]byte, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'hdel' command")
+	}
+	key := string(args[0].Bulk)
+	fields := args[1:]
+
+	s.store.Lock()
+	defer s.store.Unlock()
+
+	hash, ok := s.store.GetHash(key)
+	if !ok {
+		return []byte(":0\r\n"), nil
+	}
+	
+	var deletedCount int
+	for _, fieldArg := range fields {
+		field := string(fieldArg.Bulk)
+		if _, ok := hash[field]; ok {
+			delete(hash, field)
+			deletedCount++
+		}
+	}
+
+	// If the hash is now empty, delete the key itself.
+	if len(hash) == 0 {
+		s.store.Del(key)
+	}
+
+	return []byte(fmt.Sprintf(":%d\r\n", deletedCount)), nil
 }

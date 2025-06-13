@@ -5,7 +5,9 @@ import (
 	"container/list"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/Annany2002/velox-db/internal/resp"
 	"github.com/Annany2002/velox-db/internal/store"
@@ -19,6 +21,10 @@ type Aof struct {
 
 // New creates a new Aof manager
 func New(path string) (*Aof, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0777); err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, err
@@ -62,12 +68,24 @@ func (a *Aof) Rewrite(s *store.Store) error {
 					{Type: resp.BulkStringPrefix, Bulk: v},
 				},
 			}
+		
 		case *list.List:
 			elements := make([]resp.Object, 0, v.Len()+2)
 			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte("RPUSH")})
 			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(key)})
 			for e := v.Front(); e != nil; e = e.Next() {
 				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: e.Value.([]byte)})
+			}
+			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
+		
+		case map[string][]byte:
+			// Generate a single HSET command with all field-value pairs for hashes.
+			elements := make([]resp.Object, 0, 2*len(v)+2)
+			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte("HSET")})
+			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(key)})
+			for field, val := range v {
+				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(field)})
+				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: val})
 			}
 			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
 		}
@@ -94,7 +112,9 @@ func Load(path string) (chan resp.Object, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // Return nil channel if file doesn't exist
+			log.Println("AOF file does not exist, creating new one...")
+			os.Create(path)
+			return nil, nil
 		}
 		return nil, err
 	}
