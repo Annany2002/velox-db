@@ -84,11 +84,11 @@ The server is stable, compatible with standard Redis clients, and its new archit
 
 ### Running with Air (Hot Reload)
 
-[Air](https://github.com/cosmtrek/air) provides live reloading for Go applications. This project includes a pre-configured `.air.toml` file for convenience.
+[Air](https://github.com/air-verse/air) provides live reloading for Go applications. This project includes a pre-configured `.air.toml` file for convenience.
 
 1. Install Air (if not already installed):
    ```sh
-   go install github.com/cosmtrek/air@latest
+   go install github.com/air-verse/air@latest
    ```
 2. From the project root, run:
    ```sh
