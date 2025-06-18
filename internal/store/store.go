@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Annany2002/velox-db/internal/zset"
 )
 
 // Store is the main data store for the database. It is thread-safe.
@@ -225,6 +227,34 @@ func (s *Store) ForEach(f func(key string, value interface{})) {
 	for key, value := range s.data {
 		f(key, value)
 	}
+}
+
+// GetOrCreateZSet retrieves a sorted set or creates it if it doesn't exist.
+// This must be called within a write lock.
+func (s *Store) GetOrCreateZSet(key string) (*zset.ZSet, error) {
+	raw, ok := s.data[key]
+	if !ok {
+		z := zset.NewZSet()
+		s.data[key] = z
+		return z, nil
+	}
+	z, ok := raw.(*zset.ZSet)
+	if !ok {
+		return nil, fmt.Errorf("key holds a non-zset value")
+	}
+	return z, nil
+}
+
+// GetZSet retrieves a sorted set for a key.
+func (s *Store) GetZSet(key string) (*zset.ZSet, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	raw, ok := s.data[key]
+	if !ok {
+		return nil, false
+	}
+	z, ok := raw.(*zset.ZSet)
+	return z, ok
 }
 
 // Lock acquires a write lock on the store.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Annany2002/velox-db/internal/resp"
 	"github.com/Annany2002/velox-db/internal/store"
+	"github.com/Annany2002/velox-db/internal/zset"
 )
 
 // Aof handles the Append-Only File persistence
@@ -97,6 +98,19 @@ func (a *Aof) Rewrite(s *store.Store) error {
 			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(key)})
 			for member := range v {
 				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(member)})
+			}
+			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
+
+		case *zset.ZSet:
+			// Generate a single ZADD command with all score-member pairs.
+			elements := make([]resp.Object, 0, 2*int(v.Length())+2)
+			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte("ZADD")})
+			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(key)})
+			// Iterate through the ZSet to get all members and scores
+			nodes := v.GetRange(0, -1)
+			for _, node := range nodes {
+				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(strconv.FormatFloat(node.Score, 'f', -1, 64))})
+				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(node.Member)})
 			}
 			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
 		}

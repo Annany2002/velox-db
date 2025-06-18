@@ -64,7 +64,14 @@ func New(s *store.Store, a *aof.Aof) *Server {
 		"SISMEMBER": srv.handleSIsMember,
 		"SMEMBERS":  srv.handleSMembers,
 
-		// Register new expiration commands.
+		// ZSet commands
+		"ZADD": srv.handleZAdd,
+		"ZREM": srv.handleZRem,
+		"ZCARD": srv.handleZCard,
+		"ZSCORE": srv.handleZScore,
+		"ZRANGE": srv.handleZRange,
+
+		// Expiration commands.
 		"EXPIRE": srv.handleExpire,
 		"TTL":    srv.handleTTL,
 		// PEXPIREAT is used for AOF loading but not typically user-facing.
@@ -128,6 +135,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			"HSET": true, "HDEL": true,
 			"SADD": true, "SREM": true,
 			"EXPIRE": true, "PEXPIREAT": true,
+			"ZADD": true, "ZREM": true, "ZCARD": true, "ZSCORE": true, "ZRANGE": true,
 		}
 		if writeCmds[command] {
 			if err := s.aof.Write(obj); err != nil {
@@ -710,6 +718,70 @@ func (s *Server) handleSMembers(args []resp.Object) ([]byte, error) {
 	results := make([]resp.Object, 0, len(set))
 	for member := range set {
 		results = append(results, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(member)})
+	}
+
+	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
+}
+
+
+func (s *Server) handleZAdd(args []resp.Object) ([]byte, error) {
+	if len(args) < 3 || len(args)%2 != 1 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'zadd' command")
+	}
+	key := string(args[0].Bulk)
+	
+	s.store.Lock()
+	defer s.store.Unlock()
+	z, err := s.store.GetOrCreateZSet(key)
+	if err != nil {
+		return nil, fmt.Errorf(resp.WRONGTYPE_ERROR)
+	}
+
+	var addedCount int
+	for i := 1; i < len(args); i += 2 {
+		score, err := strconv.ParseFloat(string(args[i].Bulk), 64)
+		if err != nil {
+			return nil, fmt.Errorf("ERR value is not a valid float")
+		}
+		member := string(args[i+1].Bulk)
+		addedCount += z.Add(score, member)
+	}
+
+	return []byte(fmt.Sprintf(":%d\r\n", addedCount)), nil
+}
+
+func (s *Server) handleZCard(args []resp.Object) ([]byte, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'zcard' command")
+	}
+	key := string(args[0].Bulk)
+	z, ok := s.store.GetZSet(key)
+	if !ok {
+		return []byte(":0\r\n"), nil
+	}
+	return []byte(fmt.Sprintf(":%d\r\n", z.Length())), nil
+}
+
+func (s *Server) handleZRange(args []resp.Object) ([]byte, error) {
+	if len(args) < 3 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'zrange' command")
+	}
+	key := string(args[0].Bulk)
+	start, err1 := strconv.ParseInt(string(args[1].Bulk), 10, 64)
+	stop, err2 := strconv.ParseInt(string(args[2].Bulk), 10, 64)
+	if err1 != nil || err2 != nil {
+		return nil, fmt.Errorf("ERR value is not an integer or out of range")
+	}
+	
+	z, ok := s.store.GetZSet(key)
+	if !ok {
+		return []byte("*0\r\n"), nil // Empty array for non-existent key
+	}
+
+	nodes := z.GetRange(start, stop)
+	results := make([]resp.Object, len(nodes))
+	for i, node := range nodes {
+		results[i] = resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(node.Member)}
 	}
 
 	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
