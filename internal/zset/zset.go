@@ -149,19 +149,6 @@ func NewZSet() *ZSet {
 	}
 }
 
-// Add inserts or updates a member in the sorted set.
-func (z *ZSet) Add(score float64, member string) int {
-	// ... Implementation for Add ... (includes finding and deleting old node if score changes)
-	// For brevity in this response, we'll assume a simpler add for now.
-	if _, exists := z.dict[member]; exists {
-		// Update logic would go here (delete then re-insert)
-		return 0 // Member already exists
-	}
-	node := z.sl.Insert(score, member)
-	z.dict[member] = node
-	return 1
-}
-
 // Length returns the number of elements in the sorted set.
 func (z *ZSet) Length() int64 {
 	return z.sl.length
@@ -182,4 +169,124 @@ func (z *ZSet) GetRange(start, stop int64) []*Node {
 		n = n.level[0].forward
 	}
 	return nodes
+}
+
+// Delete removes an element from the skip list. It returns true if the element was found and removed.
+func (sl *SkipList) Delete(score float64, member string) bool {
+	update := make([]*Node, maxLevel)
+	x := sl.header
+
+	for i := sl.level - 1; i >= 0; i-- {
+		for x.level[i] != nil && (x.level[i].forward.Score < score || (x.level[i].forward.Score == score && x.level[i].forward.Member < member)) {
+			x = x.level[i].forward
+		}
+		update[i] = x
+	}
+
+	x = x.level[0].forward
+	if x != nil && x.Score == score && x.Member == member {
+		for i := 0; i < sl.level; i++ {
+			if update[i].level[i].forward == x {
+				update[i].level[i].span += x.level[i].span - 1
+				update[i].level[i].forward = x.level[i].forward
+			} else {
+				update[i].level[i].span--
+			}
+		}
+		if x.level[0].forward != nil {
+			x.level[0].forward.backward = x.backward
+		} else {
+			sl.tail = x.backward
+		}
+		for sl.level > 1 && sl.header.level[sl.level-1].forward == nil {
+			sl.level--
+		}
+		sl.length--
+		return true
+	}
+	return false
+}
+
+
+// Add inserts or updates a member in the sorted set.
+func (z *ZSet) Add(score float64, member string) int {
+	node, exists := z.dict[member]
+	if exists {
+		// If score is the same, do nothing.
+		if node.Score == score {
+			return 0
+		}
+		// Otherwise, remove the old node before re-inserting with the new score.
+		z.sl.Delete(node.Score, node.Member)
+	}
+	newNode := z.sl.Insert(score, member)
+	z.dict[member] = newNode
+	return 1
+}
+
+// Remove deletes a member from the sorted set.
+func (z *ZSet) Remove(member string) bool {
+	node, exists := z.dict[member]
+	if !exists {
+		return false
+	}
+	if z.sl.Delete(node.Score, node.Member) {
+		delete(z.dict, member)
+		return true
+	}
+	return false
+}
+
+// GetScore retrieves the score of a given member.
+func (z *ZSet) GetScore(member string) (float64, bool) {
+	node, exists := z.dict[member]
+	if !exists {
+		return 0, false
+	}
+	return node.Score, true
+}
+
+// GetRangeRev returns a range of elements by rank, from highest to lowest score.
+func (z *ZSet) GetRangeRev(start, stop int64) []*Node {
+	len := z.sl.length
+	if start < 0 { start = len + start }
+	if stop < 0 { stop = len + stop }
+	if start < 0 { start = 0 }
+	if start > stop || start >= len { return []*Node{} }
+
+	var nodes []*Node
+	x := z.sl.tail
+	// Traverse backwards to the start position
+	pos := len - 1
+	for pos > start {
+		x = x.backward
+		pos--
+	}
+
+	// Collect nodes until the stop position
+	for i := start; i <= stop && x != nil; i++ {
+		nodes = append(nodes, x)
+		x = x.backward
+	}
+	return nodes
+}
+
+// CountInRange returns the number of elements within a score range.
+func (z *ZSet) CountInRange(min, max float64) int64 {
+	var count int64 = 0
+	// Find the first element >= min
+	x := z.sl.header
+	for i := z.sl.level - 1; i >= 0; i-- {
+		for x.level[i] != nil && x.level[i].forward.Score < min {
+			x = x.level[i].forward
+		}
+	}
+	x = x.level[0].forward
+
+	// Iterate and count until score > max
+	for x != nil && x.Score <= max {
+		count++
+		x = x.level[0].forward
+	}
+	return count
 }

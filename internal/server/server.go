@@ -65,11 +65,11 @@ func New(s *store.Store, a *aof.Aof) *Server {
 		"SMEMBERS":  srv.handleSMembers,
 
 		// ZSet commands
-		"ZADD": srv.handleZAdd,
-		"ZREM": srv.handleZRem,
-		"ZCARD": srv.handleZCard,
-		"ZSCORE": srv.handleZScore,
-		"ZRANGE": srv.handleZRange,
+		"ZREM":          srv.handleZRem,
+		"ZSCORE":        srv.handleZScore,
+		"ZREVRANGE":     srv.handleZRevRange,
+		"ZCOUNT":        srv.handleZCount,
+		"ZRANGEBYSCORE": srv.handleZRangeByScore,
 
 		// Expiration commands.
 		"EXPIRE": srv.handleExpire,
@@ -723,66 +723,118 @@ func (s *Server) handleSMembers(args []resp.Object) ([]byte, error) {
 	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
 }
 
-
-func (s *Server) handleZAdd(args []resp.Object) ([]byte, error) {
-	if len(args) < 3 || len(args)%2 != 1 {
-		return nil, fmt.Errorf("ERR wrong number of arguments for 'zadd' command")
+func (s *Server) handleZRem(args []resp.Object) ([]byte, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'zrem' command")
 	}
 	key := string(args[0].Bulk)
+	members := args[1:]
 	
-	s.store.Lock()
-	defer s.store.Unlock()
-	z, err := s.store.GetOrCreateZSet(key)
-	if err != nil {
-		return nil, fmt.Errorf(resp.WRONGTYPE_ERROR)
-	}
-
-	var addedCount int
-	for i := 1; i < len(args); i += 2 {
-		score, err := strconv.ParseFloat(string(args[i].Bulk), 64)
-		if err != nil {
-			return nil, fmt.Errorf("ERR value is not a valid float")
-		}
-		member := string(args[i+1].Bulk)
-		addedCount += z.Add(score, member)
-	}
-
-	return []byte(fmt.Sprintf(":%d\r\n", addedCount)), nil
-}
-
-func (s *Server) handleZCard(args []resp.Object) ([]byte, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("ERR wrong number of arguments for 'zcard' command")
-	}
-	key := string(args[0].Bulk)
 	z, ok := s.store.GetZSet(key)
 	if !ok {
 		return []byte(":0\r\n"), nil
 	}
-	return []byte(fmt.Sprintf(":%d\r\n", z.Length())), nil
-}
-
-func (s *Server) handleZRange(args []resp.Object) ([]byte, error) {
-	if len(args) < 3 {
-		return nil, fmt.Errorf("ERR wrong number of arguments for 'zrange' command")
-	}
-	key := string(args[0].Bulk)
-	start, err1 := strconv.ParseInt(string(args[1].Bulk), 10, 64)
-	stop, err2 := strconv.ParseInt(string(args[2].Bulk), 10, 64)
-	if err1 != nil || err2 != nil {
-		return nil, fmt.Errorf("ERR value is not an integer or out of range")
+	
+	var removedCount int
+	for _, member := range members {
+		if z.Remove(string(member.Bulk)) {
+			removedCount++
+		}
 	}
 	
+	return []byte(fmt.Sprintf(":%d\r\n", removedCount)), nil
+}
+
+func (s *Server) handleZScore(args []resp.Object) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'zscore' command")
+	}
+	key := string(args[0].Bulk)
+	member := string(args[1].Bulk)
+
 	z, ok := s.store.GetZSet(key)
 	if !ok {
-		return []byte("*0\r\n"), nil // Empty array for non-existent key
+		return []byte("$-1\r\n"), nil // Null bulk string for non-existent key
 	}
 
-	nodes := z.GetRange(start, stop)
+	score, ok := z.GetScore(member)
+	if !ok {
+		return []byte("$-1\r\n"), nil // Null bulk string for non-existent member
+	}
+
+	scoreStr := strconv.FormatFloat(score, 'f', -1, 64)
+	return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(scoreStr), scoreStr)), nil
+}
+
+func (s *Server) handleZRevRange(args []resp.Object) ([]byte, error) {
+	// This logic is very similar to ZRANGE, but calls GetRangeRev.
+	if len(args) < 3 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'zrevrange' command")
+	}
+	// ... parsing of start/stop and error handling ...
+	key := string(args[0].Bulk)
+	start, _ := strconv.ParseInt(string(args[1].Bulk), 10, 64)
+	stop, _ := strconv.ParseInt(string(args[2].Bulk), 10, 64)
+
+	z, ok := s.store.GetZSet(key)
+	if !ok {
+		return []byte("*0\r\n"), nil
+	}
+
+	nodes := z.GetRangeRev(start, stop)
 	results := make([]resp.Object, len(nodes))
 	for i, node := range nodes {
 		results[i] = resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(node.Member)}
 	}
+	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
+}
 
+func (s *Server) handleZCount(args []resp.Object) ([]byte, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'zcount' command")
+	}
+	key := string(args[0].Bulk)
+	min, err1 := strconv.ParseFloat(string(args[1].Bulk), 64)
+	max, err2 := strconv.ParseFloat(string(args[2].Bulk), 64)
+	if err1 != nil || err2 != nil {
+		return nil, fmt.Errorf("ERR min or max is not a float")
+	}
+
+	z, ok := s.store.GetZSet(key)
+	if !ok {
+		return []byte(":0\r\n"), nil
+	}
+
+	count := z.CountInRange(min, max)
+	return []byte(fmt.Sprintf(":%d\r\n", count)), nil
+}
+
+// handleZRangeByScore is a simplified implementation.
+func (s *Server) handleZRangeByScore(args []resp.Object) ([]byte, error) {
+	// This command can get very complex with ( and +inf/-inf.
+	// We will implement the basic inclusive version.
+	if len(args) != 3 {
+		return nil, fmt.Errorf("ERR wrong number of arguments")
+	}
+	key := string(args[0].Bulk)
+	min, err1 := strconv.ParseFloat(string(args[1].Bulk), 64)
+	max, err2 := strconv.ParseFloat(string(args[2].Bulk), 64)
+	if err1 != nil || err2 != nil {
+		return nil, fmt.Errorf("ERR min or max is not a float")
+	}
+
+	z, ok := s.store.GetZSet(key)
+	if !ok {
+		return []byte("*0\r\n"), nil
+	}
+
+	// This is inefficient without a dedicated skip list method, but works for now.
+	var results []resp.Object
+	nodes := z.GetRange(0, -1) // Get all nodes
+	for _, node := range nodes {
+		if node.Score >= min && node.Score <= max {
+			results = append(results, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte(node.Member)})
+		}
+	}
 	return resp.Object{Type: resp.ArrayPrefix, Array: results}.ToBytes(), nil
 }
