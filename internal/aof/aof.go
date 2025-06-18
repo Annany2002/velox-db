@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/Annany2002/velox-db/internal/resp"
 	"github.com/Annany2002/velox-db/internal/store"
@@ -68,7 +69,7 @@ func (a *Aof) Rewrite(s *store.Store) error {
 					{Type: resp.BulkStringPrefix, Bulk: v},
 				},
 			}
-		
+
 		case *list.List:
 			elements := make([]resp.Object, 0, v.Len()+2)
 			elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: []byte("RPUSH")})
@@ -77,7 +78,7 @@ func (a *Aof) Rewrite(s *store.Store) error {
 				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: e.Value.([]byte)})
 			}
 			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
-		
+
 		case map[string][]byte:
 			// Generate a single HSET command with all field-value pairs for hashes.
 			elements := make([]resp.Object, 0, 2*len(v)+2)
@@ -88,7 +89,7 @@ func (a *Aof) Rewrite(s *store.Store) error {
 				elements = append(elements, resp.Object{Type: resp.BulkStringPrefix, Bulk: val})
 			}
 			cmd = resp.Object{Type: resp.ArrayPrefix, Array: elements}
-		
+
 		case map[string]struct{}:
 			// Generate a single SADD command with all members for the set.
 			elements := make([]resp.Object, 0, len(v)+2)
@@ -102,6 +103,22 @@ func (a *Aof) Rewrite(s *store.Store) error {
 
 		if _, err := tmpFile.Write(cmd.ToBytes()); err != nil {
 			fmt.Printf("Error writing to temp AOF file: %v\n", err)
+		}
+
+		// After writing the key's value, check if it has an expiration.
+		if expiry, ok := s.GetExpiry(key); ok {
+			// Create a PEXPIREAT command to preserve the exact expiry time.
+			pexpireatCmd := resp.Object{
+				Type: resp.ArrayPrefix,
+				Array: []resp.Object{
+					{Type: resp.BulkStringPrefix, Bulk: []byte("PEXPIREAT")},
+					{Type: resp.BulkStringPrefix, Bulk: []byte(key)},
+					{Type: resp.BulkStringPrefix, Bulk: []byte(strconv.FormatInt(expiry.UnixMilli(), 10))},
+				},
+			}
+			if _, err := tmpFile.Write(pexpireatCmd.ToBytes()); err != nil {
+				fmt.Printf("Error writing expiry to temp AOF file: %v\n", err)
+			}
 		}
 	})
 

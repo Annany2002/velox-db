@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Annany2002/velox-db/internal/aof"
 	"github.com/Annany2002/velox-db/internal/resp"
@@ -32,21 +33,21 @@ func New(s *store.Store, a *aof.Aof) *Server {
 	}
 	// The command table is populated here.
 	srv.commands = map[string]commandFunc{
-		"PING":       srv.handlePing,
+		"PING": srv.handlePing,
 
 		// String commands
-		"SET":        srv.handleSet,
-		"GET":        srv.handleGet,
-		"DEL":        srv.handleDel,
-		
+		"SET": srv.handleSet,
+		"GET": srv.handleGet,
+		"DEL": srv.handleDel,
+
 		// List commands
-		"LPUSH":      srv.handleLPush,
-		"RPUSH":      srv.handleRPush,
-		"LPOP":       srv.handleLPop,
-		"RPOP":       srv.handleRPop,
-		"LLEN":       srv.handleLLen,
-		"LINDEX":     srv.handleLIndex,
-		"LRANGE":     srv.handleLRange,
+		"LPUSH":  srv.handleLPush,
+		"RPUSH":  srv.handleRPush,
+		"LPOP":   srv.handleLPop,
+		"RPOP":   srv.handleRPop,
+		"LLEN":   srv.handleLLen,
+		"LINDEX": srv.handleLIndex,
+		"LRANGE": srv.handleLRange,
 
 		// AOF commands
 		"REWRITEAOF": srv.handleRewriteAOF,
@@ -62,12 +63,22 @@ func New(s *store.Store, a *aof.Aof) *Server {
 		"SREM":      srv.handleSRem,
 		"SISMEMBER": srv.handleSIsMember,
 		"SMEMBERS":  srv.handleSMembers,
+
+		// Register new expiration commands.
+		"EXPIRE": srv.handleExpire,
+		"TTL":    srv.handleTTL,
+		// PEXPIREAT is used for AOF loading but not typically user-facing.
+		// We add it to the command table to allow AOF recovery to work.
+		"PEXPIREAT": srv.handlePExpireAt,
 	}
 	return srv
 }
 
 // Start begins listening for client connections.
 func (s *Server) Start(addr string) error {
+	// Launch the active expiration janitor.
+	go s.startJanitor()
+
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to bind to address %s: %w", addr, err)
@@ -112,15 +123,45 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		command := strings.ToUpper(string(obj.Array[0].Bulk))
 		writeCmds := map[string]bool{
-			"SET": true, "DEL": true, 
-			"LPUSH": true, "RPUSH": true, "LPOP": true, "RPOP": true, 
+			"SET": true, "DEL": true,
+			"LPUSH": true, "RPUSH": true, "LPOP": true, "RPOP": true,
 			"HSET": true, "HDEL": true,
 			"SADD": true, "SREM": true,
+			"EXPIRE": true, "PEXPIREAT": true,
 		}
 		if writeCmds[command] {
 			if err := s.aof.Write(obj); err != nil {
 				log.Printf("Failed to write to AOF: %s", err.Error())
 			}
+		}
+	}
+}
+
+// startJanitor begins a background process to actively expire keys.
+func (s *Server) startJanitor() {
+	// In a real system, the interval would be configurable.
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// Redis samples a small number of keys. We'll do the same.
+		keys := s.store.RandomKeysWithExpiry(20)
+		if len(keys) == 0 {
+			continue
+		}
+
+		var expiredCount int
+		s.store.Lock()
+		for _, key := range keys {
+			// The isExpired check handles deletion internally.
+			if s.store.IsExpired(key) {
+				expiredCount++
+			}
+		}
+		s.store.Unlock()
+
+		if expiredCount > 0 {
+			log.Printf("Janitor cleaned up %d expired keys", expiredCount)
 		}
 	}
 }
@@ -152,6 +193,93 @@ func (s *Server) ApplyCommandForLoad(obj resp.Object) error {
 	// This function uses the new applyCommand dispatcher.
 	_, err := s.applyCommand(obj)
 	return err
+}
+
+// handleExpire handles the EXPIRE command.
+// EXPIRE key seconds
+func (s *Server) handleExpire(args []resp.Object) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'expire' command")
+	}
+	key := string(args[0].Bulk)
+	seconds, err := strconv.Atoi(string(args[1].Bulk))
+	if err != nil {
+		return nil, fmt.Errorf("ERR value is not an integer or out of range")
+	}
+
+	// Check if key exists first using Get (covers string type)
+	_, keyExists := s.store.Get(key)
+	if !keyExists {
+		// Try other types (list, hash, set)
+		if _, ok := s.store.GetList(key); !ok {
+			if _, ok := s.store.GetHash(key); !ok {
+				if _, ok := s.store.GetSet(key); !ok {
+					return []byte(":0\r\n"), nil // No key to expire
+				}
+			}
+		}
+	}
+
+	expiry := time.Now().Add(time.Duration(seconds) * time.Second)
+	s.store.SetExpiry(key, expiry)
+
+	return []byte(":1\r\n"), nil // Success
+}
+
+// handleTTL handles the TTL command.
+// TTL key
+func (s *Server) handleTTL(args []resp.Object) ([]byte, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'ttl' command")
+	}
+	key := string(args[0].Bulk)
+
+	s.store.Lock()
+	isExpired := s.store.IsExpired(key) // Check and delete if expired
+	s.store.Unlock()
+
+	if isExpired {
+		return []byte(":-2\r\n"), nil // Key was expired and just deleted
+	}
+
+	expiry, ok := s.store.GetExpiry(key)
+	if !ok {
+		// Before returning -1, we must confirm the key exists.
+		keyExists := false
+		if _, ok := s.store.Get(key); ok {
+			keyExists = true
+		} else if _, ok := s.store.GetList(key); ok {
+			keyExists = true
+		} else if _, ok := s.store.GetHash(key); ok {
+			keyExists = true
+		} else if _, ok := s.store.GetSet(key); ok {
+			keyExists = true
+		}
+		if !keyExists {
+			return []byte(":-2\r\n"), nil // Key does not exist
+		}
+		return []byte(":-1\r\n"), nil // Key exists but has no expiry
+	}
+
+	ttl := time.Until(expiry).Seconds()
+	return []byte(fmt.Sprintf(":%d\r\n", int(ttl))), nil
+}
+
+// handlePExpireAt handles the PEXPIREAT command, used for AOF loading.
+func (s *Server) handlePExpireAt(args []resp.Object) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("ERR wrong number of arguments for 'pexpireat' command")
+	}
+	key := string(args[0].Bulk)
+	ms, err := strconv.ParseInt(string(args[1].Bulk), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("ERR value is not an integer or out of range")
+	}
+
+	expiry := time.UnixMilli(ms)
+	s.store.SetExpiry(key, expiry)
+
+	return []byte(":1\r\n"), nil
 }
 
 // --- Individual Command Handlers ---
@@ -384,10 +512,10 @@ func (s *Server) handleHSet(args []resp.Object) ([]byte, error) {
 		return nil, fmt.Errorf("ERR wrong number of arguments for 'hset' command")
 	}
 	key := string(args[0].Bulk)
-	
+
 	s.store.Lock()
 	defer s.store.Unlock()
-	
+
 	hash, err := s.store.GetOrCreateHash(key)
 	if err != nil {
 		return nil, fmt.Errorf(resp.WRONGTYPE_ERROR)
@@ -467,7 +595,7 @@ func (s *Server) handleHDel(args []resp.Object) ([]byte, error) {
 	if !ok {
 		return []byte(":0\r\n"), nil
 	}
-	
+
 	var deletedCount int
 	for _, fieldArg := range fields {
 		field := string(fieldArg.Bulk)
@@ -523,7 +651,7 @@ func (s *Server) handleSRem(args []resp.Object) ([]byte, error) {
 
 	s.store.Lock()
 	defer s.store.Unlock()
-	
+
 	set, ok := s.store.GetSet(key)
 	if !ok {
 		return []byte(":0\r\n"), nil
