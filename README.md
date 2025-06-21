@@ -11,7 +11,7 @@ VeloxDB is a high-performance, in-memory database built from scratch in Go, insp
 The project has evolved into a feature-rich, **multi-data-structure database** with a durable persistence layer and a highly modular internal architecture. Key milestones completed include:
 
 - A generic storage engine supporting multiple data types.
-- Full implementation of **String, List, Hash, and Set** data structures.
+- Full implementation of **String, List, Hash, Set, and Sorted Set** data structures.
 - A complete, recoverable **AOF persistence** mechanism.
 - An advanced **AOF compaction** feature (`REWRITEAOF`).
 - A professional, decoupled internal package structure.
@@ -21,7 +21,8 @@ The server is stable, compatible with standard Redis clients, and its extensible
 ## ✨ Key Features
 
 - **Modular Architecture**: Logic is cleanly separated into distinct packages (`server`, `store`, `aof`, `resp`), promoting maintainability and testability.
-- **Multi-Data Structure Support**: Natively supports Strings, Lists, Hashes, and Sets.
+- **Multi-Data Structure Support**: Natively supports Strings, Lists, Hashes, Sets, and Sorted Sets.
+- **Key Expiration**: Supports `EXPIRE` and `TTL` for time-based key removal.
 - **Extensible Command Dispatcher**: Uses a command table (map) instead of a large switch statement, making new command additions trivial.
 - **Concurrent TCP Server**: Handles multiple clients simultaneously using a goroutine-per-connection model.
 - **Full RESP Protocol Support**: A compliant parser and serializer for the Redis Serialization Protocol.
@@ -62,6 +63,22 @@ The server is stable, compatible with standard Redis clients, and its extensible
 - **`SISMEMBER key member`**
 - **`SMEMBERS key`**
 
+### Sorted Set Commands
+
+- **`ZADD key score member [score member ...]`**
+- **`ZREM key member [member ...]`**
+- **`ZCARD key`**
+- **`ZSCORE key member`**
+- **`ZCOUNT key min max`**
+- **`ZRANGE key start stop [WITHSCORES]`**
+- **`ZREVRANGE key start stop [WITHSCORES]`**
+- **`ZRANGEBYSCORE key min max [WITHSCORES]`**
+
+### Key Management Commands
+
+- **`EXPIRE key seconds`**
+- **`TTL key`**
+
 ### Server Commands
 
 - **`REWRITEAOF`**
@@ -78,7 +95,7 @@ The server is stable, compatible with standard Redis clients, and its extensible
 
 1.  Clone the repository:
     ```sh
-    git clone https://github.com/Annany2002/velox-db
+    git clone https://github.com/Annany2002/velox-db.git
     ```
 2.  Navigate to the application's entrypoint directory:
     ```sh
@@ -185,6 +202,24 @@ redis-cli -p 6380
 (integer) 1
 ```
 
+**Example Sorted Set Session:**
+
+```
+127.0.0.1:6380> ZADD leaderboard 100 "player1" 250 "player2" 50 "player3"
+(integer) 3
+127.0.0.1:6380> ZRANGE leaderboard 0 -1 WITHSCORES
+1) "player3"
+2) "50"
+3) "player1"
+4) "100"
+5) "player2"
+6) "250"
+127.0.0.1:6380> ZSCORE leaderboard "player2"
+"250"
+127.0.0.1:6380> ZCARD leaderboard
+(integer) 3
+```
+
 ## 🏗️ Architecture
 
 The project's architecture is organized into decoupled packages, promoting a clean separation of concerns.
@@ -205,6 +240,8 @@ The project's architecture is organized into decoupled packages, promoting a cle
 │   │   └── server.go     # Handles TCP server, connection loop, and command dispatching.
 │   └── store/
 │       └── store.go      # Handles the in-memory, concurrent-safe, generic data store.
+│   └── zset/
+│       └── zset.go       # Implements the Sorted Set data structure (Skip List).
 ├── .air.toml
 ├── docker-compose.yml
 ├── Dockerfile
