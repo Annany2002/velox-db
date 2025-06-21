@@ -247,8 +247,13 @@ func (s *Store) GetOrCreateZSet(key string) (*zset.ZSet, error) {
 
 // GetZSet retrieves a sorted set for a key.
 func (s *Store) GetZSet(key string) (*zset.ZSet, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.IsExpired(key) {
+		return nil, false
+	}
+
 	raw, ok := s.data[key]
 	if !ok {
 		return nil, false

@@ -7,6 +7,12 @@ import (
 const maxLevel = 32 // Max level for a skip list node
 const p = 0.25      // Probability for a node to have a higher level
 
+// Level represents a level in the skip list.
+type Level struct {
+	forward *Node
+	span    int64 // The number of nodes this level's forward pointer skips over
+}
+
 // Node represents an element in the skip list.
 type Node struct {
 	Member   string
@@ -15,10 +21,6 @@ type Node struct {
 	level    []*Level // Each level has a forward pointer and a span
 }
 
-type Level struct {
-	forward *Node
-	span    int64 // The number of nodes this level's forward pointer skips over
-}
 
 // SkipList is the main structure holding the list.
 type SkipList struct {
@@ -45,11 +47,17 @@ func randomLevel() int {
 
 // NewNode creates a new skip list node.
 func NewNode(level int, score float64, member string) *Node {
-	return &Node{
+	// The node's level slice is created.
+	node := &Node{
 		Score:  score,
 		Member: member,
 		level:  make([]*Level, level),
 	}
+	// THE FIX: We must loop through the slice and initialize each level struct.
+	for i := range node.level {
+		node.level[i] = &Level{}
+	}
+	return node
 }
 
 // NewSkipList creates a new skip list.
@@ -73,8 +81,9 @@ func (sl *SkipList) Insert(score float64, member string) *Node {
 		} else {
 			rank[i] = rank[i+1]
 		}
-		// Find the correct insertion point
-		for x.level[i] != nil && (x.level[i].forward.Score < score || (x.level[i].forward.Score == score && x.level[i].forward.Member < member)) {
+
+		// Check if x.level[i].forward is nil before accessing its properties.
+		for x.level[i].forward != nil && (x.level[i].forward.Score < score || (x.level[i].forward.Score == score && x.level[i].forward.Member < member)) {
 			rank[i] += x.level[i].span
 			x = x.level[i].forward
 		}
@@ -95,9 +104,7 @@ func (sl *SkipList) Insert(score float64, member string) *Node {
 
 	// Insert the new node
 	for i := 0; i < level; i++ {
-		x.level[i] = &Level{
-			forward: update[i].level[i].forward,
-		}
+		x.level[i].forward = update[i].level[i].forward
 		update[i].level[i].forward = x
 
 		// Update span
@@ -177,7 +184,8 @@ func (sl *SkipList) Delete(score float64, member string) bool {
 	x := sl.header
 
 	for i := sl.level - 1; i >= 0; i-- {
-		for x.level[i] != nil && (x.level[i].forward.Score < score || (x.level[i].forward.Score == score && x.level[i].forward.Member < member)) {
+		// Check if x.level[i].forward is nil before accessing its properties.
+		for x.level[i].forward != nil && (x.level[i].forward.Score < score || (x.level[i].forward.Score == score && x.level[i].forward.Member < member)) {
 			x = x.level[i].forward
 		}
 		update[i] = x
@@ -206,7 +214,6 @@ func (sl *SkipList) Delete(score float64, member string) bool {
 	}
 	return false
 }
-
 
 // Add inserts or updates a member in the sorted set.
 func (z *ZSet) Add(score float64, member string) int {
